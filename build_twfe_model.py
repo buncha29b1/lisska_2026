@@ -3,11 +3,16 @@
 Run from the repository root:
     python build_twfe_model.py
 
-Inputs are read from ./data. Outputs are written to the repository root so the
-code files and clean model artifacts remain outside the data folders.
+To estimate on the clean dataset exported from preprocess_twfe_sqlserver.sql:
+    python build_twfe_model.py --panel-input ca_county_year_panel.csv
+
+Inputs are read from ./data unless --panel-input or --sql-connection is used.
+Outputs are written to the repository root so code files and clean model artifacts
+remain outside the data folders.
 """
 from __future__ import annotations
 
+import argparse
 import json
 import math
 import re
@@ -27,6 +32,7 @@ PANEL_CSV = ROOT / "ca_county_year_panel.csv"
 PANEL_PARQUET = ROOT / "ca_county_year_panel.parquet"
 PY_RESULTS_CSV = ROOT / "twfe_python_results.csv"
 DIAGNOSTICS_JSON = ROOT / "twfe_panel_diagnostics.json"
+SQL_PANEL_CSV = ROOT / "ca_county_year_panel_from_sql.csv"
 
 
 def clean_county_name(value: object) -> str:
@@ -291,6 +297,35 @@ def write_panel(panel: pd.DataFrame) -> None:
     DIAGNOSTICS_JSON.write_text(json.dumps(diagnostics, indent=2), encoding="utf-8")
 
 
+def load_clean_panel(path: Path) -> pd.DataFrame:
+    """Load a clean panel exported from SQL Server or produced by this script."""
+    if not path.exists():
+        raise FileNotFoundError(f"Clean panel file not found: {path}")
+    if path.suffix.lower() == ".parquet":
+        panel = pd.read_parquet(path)
+    else:
+        panel = pd.read_csv(path, dtype={"fips": str})
+    if "fips" in panel.columns:
+        panel["fips"] = panel["fips"].astype(str).str.zfill(5)
+    if "year" in panel.columns:
+        panel["year"] = to_num(panel["year"]).astype(int)
+    return panel
+
+
+def load_panel_from_sql(connection_string: str, table: str = "dbo.ca_county_year_panel") -> pd.DataFrame:
+    """Load the SQL Server-generated clean panel directly with pyodbc."""
+    try:
+        import pyodbc
+    except ImportError as exc:
+        raise ImportError("Install pyodbc to use --sql-connection, or export the SQL result to CSV and pass --panel-input.") from exc
+    query = f"SELECT * FROM {table} ORDER BY fips, [year]"
+    with pyodbc.connect(connection_string) as conn:
+        panel = pd.read_sql(query, conn)
+    if "fips" in panel.columns:
+        panel["fips"] = panel["fips"].astype(str).str.zfill(5)
+    return panel
+
+
 def fit_twfe(panel: pd.DataFrame, outcome: str = "log_gasoline_pc") -> pd.DataFrame:
     covariates = ["dose_x_post_nevi", "log_med_hh_inc", "share_under_150k", "share_white_nh", "log_population"]
     data = panel[["fips", "year", outcome, *covariates]].dropna().copy()
@@ -316,13 +351,40 @@ def fit_twfe(panel: pd.DataFrame, outcome: str = "log_gasoline_pc") -> pd.DataFr
     return out
 
 
+def parse_args() -> argparse.Namespace:
+    parser = argparse.ArgumentParser(description="Build or consume the clean county-year panel and estimate the TWFE model.")
+    parser.add_argument(
+        "--panel-input",
+        type=Path,
+        default=None,
+        help="Use an existing clean panel CSV/parquet, such as the final result exported from preprocess_twfe_sqlserver.sql, instead of rebuilding from raw data.",
+    )
+    parser.add_argument(
+        "--sql-connection",
+        default=None,
+        help="Optional pyodbc SQL Server connection string. When provided, the script reads dbo.ca_county_year_panel directly.",
+    )
+    parser.add_argument("--sql-table", default="dbo.ca_county_year_panel", help="SQL table/view to read with --sql-connection.")
+    parser.add_argument("--outcome", default="log_gasoline_pc", help="Outcome column to estimate; default is log_gasoline_pc.")
+    return parser.parse_args()
+
+
 def main() -> int:
-    panel = assemble_panel()
-    write_panel(panel)
-    results = fit_twfe(panel)
-    print(f"Wrote {PANEL_CSV.name} with {len(panel):,} rows and {panel['fips'].nunique()} counties.")
-    if PANEL_PARQUET.exists():
-        print(f"Wrote {PANEL_PARQUET.name}.")
+    args = parse_args()
+    if args.sql_connection:
+        panel = load_panel_from_sql(args.sql_connection, args.sql_table)
+        panel.to_csv(SQL_PANEL_CSV, index=False)
+        print(f"Loaded {len(panel):,} rows from {args.sql_table} and wrote {SQL_PANEL_CSV.name}.")
+    elif args.panel_input is not None:
+        panel = load_clean_panel(args.panel_input)
+        print(f"Loaded clean panel {args.panel_input} with {len(panel):,} rows and {panel['fips'].nunique()} counties.")
+    else:
+        panel = assemble_panel()
+        write_panel(panel)
+        print(f"Wrote {PANEL_CSV.name} with {len(panel):,} rows and {panel['fips'].nunique()} counties.")
+        if PANEL_PARQUET.exists():
+            print(f"Wrote {PANEL_PARQUET.name}.")
+    results = fit_twfe(panel, outcome=args.outcome)
     print(f"Wrote {PY_RESULTS_CSV.name}.")
     print(results.to_string(index=False))
     return 0

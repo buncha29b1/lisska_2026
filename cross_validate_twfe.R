@@ -5,18 +5,20 @@
 args_file <- grep("^--file=", commandArgs(FALSE), value = TRUE)
 script_path <- if (length(args_file) > 0) sub("^--file=", "", args_file[[1]]) else file.path(getwd(), "cross_validate_twfe.R")
 root <- normalizePath(dirname(script_path), mustWork = FALSE)
-panel_csv <- file.path(root, "ca_county_year_panel.csv")
+args <- commandArgs(trailingOnly = TRUE)
+panel_csv <- if (length(args) >= 1) args[[1]] else Sys.getenv("TWFE_PANEL_CSV", file.path(root, "ca_county_year_panel.csv"))
 python_results_csv <- file.path(root, "twfe_python_results.csv")
 r_results_csv <- file.path(root, "twfe_r_results.csv")
 comparison_csv <- file.path(root, "twfe_python_r_comparison.csv")
 
 if (!file.exists(panel_csv)) {
-  stop("ca_county_year_panel.csv not found. Run python build_twfe_model.py first.")
+  stop("Panel CSV not found. Run preprocess_twfe_sqlserver.sql and save its final result set as ca_county_year_panel.csv, or run python build_twfe_model.py first.")
 }
 
 panel <- read.csv(panel_csv, stringsAsFactors = FALSE)
 needed <- c("log_gasoline_pc", "dose_x_post_nevi", "log_med_hh_inc", "share_under_150k", "share_white_nh", "log_population", "fips", "year")
 panel <- panel[complete.cases(panel[, needed]), ]
+panel$fips <- sprintf("%05s", as.character(panel$fips))
 panel$fips <- as.factor(panel$fips)
 panel$year <- as.factor(panel$year)
 

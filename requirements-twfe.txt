@@ -5,3 +5,4 @@ pyarrow
 geopandas
 linearmodels
 statsmodels
+pyodbc
