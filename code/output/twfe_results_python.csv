@@ -1,9 +1,0 @@
-model_id,model_name,regressor,estimate,std_error,t_stat,p_value,ci_lower,ci_upper,n_obs,rsq_within,rsq_overall
-M1,Linear dose x Post_NEVI,dose_x_post_nevi,0.000000,0.000000,2.365685,0.018219,0.000000,0.000000,928,-0.000000,-0.000000
-M2,Linear (in quadratic spec),dose_x_post_nevi,0.000000,0.000000,0.081972,0.934689,-0.000000,0.000000,928,-0.000000,-0.000000
-M2,Quadratic,dose_sq_x_post_nevi,0.000000,0.000000,0.624445,0.532502,-0.000000,0.000000,928,-0.000000,-0.000000
-M3,Bin dose_q2_x_post_nevi,dose_q2_x_post_nevi,-0.000000,0.000000,-0.338174,0.735315,-0.000000,0.000000,928,0.000000,-0.000000
-M3,Bin dose_q3_x_post_nevi,dose_q3_x_post_nevi,-0.000000,0.000000,-1.232649,0.218047,-0.000000,0.000000,928,0.000000,-0.000000
-M3,Bin dose_q4_x_post_nevi,dose_q4_x_post_nevi,-0.000000,0.000000,-1.039634,0.298805,-0.000000,0.000000,928,0.000000,-0.000000
-M3,Bin dose_q5_x_post_nevi,dose_q5_x_post_nevi,0.000000,0.000000,0.868602,0.385310,-0.000000,0.000000,928,0.000000,-0.000000
-M4,Dose x Post_NEVI,dose_x_post_nevi,0.000000,0.000000,2.365685,0.018219,0.000000,0.000000,928,-0.000000,-0.000000
