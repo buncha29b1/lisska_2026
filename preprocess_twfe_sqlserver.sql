@@ -1,36 +1,16 @@
 /*
 SQL Server preprocessing for the continuous-treatment TWFE panel.
 
-Run this file in SQL Server Management Studio. SQLCMD Mode is NOT required.
+Run in SQL Server Management Studio with SQLCMD Mode enabled. Keep this file in
+the repository root. Set RepoRoot to the absolute path of this repo if SSMS is
+not launched from the repo directory.
 
-IMPORTANT: SQL Server cannot infer the folder that contains an SSMS query file.
-Before running, set @RepoRoot below to the absolute path of this repository on
- the SQL Server machine, for example:
-  N'C:\Users\YourName\Documents\lisska_2026'
-
-This script intentionally avoids OPENROWSET/Ad Hoc Distributed Queries. The CEC
-Excel workbook has been converted once into the root-level helper CSV
-ca_cec_county_gasoline_long.csv, so the script works on locked-down SQL Server
-installations where OPENROWSET is disabled.
+:setvar RepoRoot "C:\absolute\path\to\lisska_2026"
 */
 
 SET NOCOUNT ON;
-
-DROP TABLE IF EXISTS #twfe_config;
-CREATE TABLE #twfe_config (repo_root nvarchar(4000) NOT NULL);
-
-DECLARE @RepoRoot nvarchar(4000) = N''; -- <-- EDIT THIS ONE LINE if auto-detection below does not match your machine.
-
--- Convenience fallback for this container/repo path. Windows SSMS users should
--- paste their own absolute Windows path in @RepoRoot above.
-IF NULLIF(LTRIM(RTRIM(@RepoRoot)), N'') IS NULL
-BEGIN
-  SET @RepoRoot = N'/workspace/lisska_2026';
-END;
-
--- Normalize a trailing slash/backslash away so path concatenation is stable.
-WHILE RIGHT(@RepoRoot, 1) IN (N'\', N'/') SET @RepoRoot = LEFT(@RepoRoot, LEN(@RepoRoot) - 1);
-INSERT INTO #twfe_config(repo_root) VALUES (@RepoRoot);
+DECLARE @RepoRoot nvarchar(4000) = N'$(RepoRoot)';
+IF @RepoRoot LIKE N'$' + N'(RepoRoot)' SET @RepoRoot = CONVERT(nvarchar(4000), SERVERPROPERTY('MachineName'));
 
 IF DB_ID(N'lisska_2026_twfe') IS NULL CREATE DATABASE lisska_2026_twfe;
 GO
@@ -45,7 +25,7 @@ DROP TABLE IF EXISTS dbo.stg_eia_seds;
 DROP TABLE IF EXISTS dbo.stg_fuel_tax_stats;
 DROP TABLE IF EXISTS dbo.stg_ev_stations;
 DROP TABLE IF EXISTS dbo.stg_air_monitor;
-DROP TABLE IF EXISTS dbo.stg_cec_gasoline_long;
+DROP TABLE IF EXISTS dbo.stg_cec_gasoline_wide;
 DROP TABLE IF EXISTS dbo.clean_counties;
 DROP TABLE IF EXISTS dbo.clean_acs;
 DROP TABLE IF EXISTS dbo.clean_gasoline;
@@ -71,10 +51,9 @@ CREATE TABLE dbo.stg_acs (
 CREATE TABLE dbo.stg_rural (FIPS varchar(5), State varchar(2), County_Name nvarchar(120), Attribute varchar(50), Value nvarchar(100));
 CREATE TABLE dbo.stg_eia_seds (period int, stateId varchar(2), seriesId varchar(20), seriesDescription nvarchar(300), value float, unit nvarchar(100), gallons float);
 CREATE TABLE dbo.stg_fuel_tax_stats ([Fiscal Year From] int, [Fiscal Year To] int, [Gasoline Taxable Distributions (Gallons)] float, [Gasoline Tax Rate Per Gallon as of July 1] float, [Gasoline Revenue] float, [Gasoline Refund] float, [Gasoline Taxpayers as of June 30] int);
-CREATE TABLE dbo.stg_cec_gasoline_long (county nvarchar(100), [year] int, gasoline_million_gallons float, gasoline_gallons float);
 CREATE TABLE dbo.stg_ev_stations (
-  access_code nvarchar(50), access_days_time nvarchar(max), access_detail_code nvarchar(100), cards_accepted nvarchar(max), date_last_confirmed nvarchar(50),
-  expected_date nvarchar(50), fuel_type_code varchar(20), groups_with_access_code nvarchar(100), id int, maximum_vehicle_class nvarchar(20), open_date nvarchar(50),
+  access_code nvarchar(50), access_days_time nvarchar(max), access_detail_code nvarchar(100), cards_accepted nvarchar(max), date_last_confirmed date,
+  expected_date date, fuel_type_code varchar(20), groups_with_access_code nvarchar(100), id int, maximum_vehicle_class nvarchar(20), open_date date,
   owner_type_code nvarchar(20), related_stations nvarchar(max), restricted_access nvarchar(10), status_code nvarchar(20), funding_sources nvarchar(max),
   facility_type nvarchar(100), station_name nvarchar(300), station_phone nvarchar(100), updated_at nvarchar(100), geocode_status nvarchar(50),
   latitude float, longitude float, city nvarchar(100), country varchar(5), intersection_directions nvarchar(max), plus4 nvarchar(20), state varchar(2),
@@ -104,33 +83,40 @@ CREATE TABLE dbo.stg_air_monitor (
 );
 GO
 
-DECLARE @RepoRoot nvarchar(4000) = (SELECT repo_root FROM #twfe_config);
-DECLARE @sep nchar(1) = CASE WHEN CHARINDEX(N'/', @RepoRoot) > 0 AND CHARINDEX(N'\', @RepoRoot) = 0 THEN N'/' ELSE N'\' END;
+DECLARE @RepoRoot nvarchar(4000) = N'$(RepoRoot)';
+IF @RepoRoot LIKE N'$' + N'(RepoRoot)' THROW 50001, 'Enable SQLCMD Mode and set :setvar RepoRoot to the absolute repo path.', 1;
 DECLARE @sql nvarchar(max), @path nvarchar(4000);
 
-SET @path = @RepoRoot + @sep + N'data' + @sep + N'county_spatial_data' + @sep + N'ca_counties.csv';
-SET @sql = N'BULK INSERT dbo.stg_ca_counties FROM ''' + REPLACE(@path, '''', '''''') + N''' WITH (FORMAT=''CSV'', FIRSTROW=2, FIELDQUOTE=''"'', TABLOCK);'; EXEC(@sql);
-SET @path = @RepoRoot + @sep + N'data' + @sep + N'sociodemographic' + @sep + N'census_acs_county_data.csv';
-SET @sql = N'BULK INSERT dbo.stg_acs FROM ''' + REPLACE(@path, '''', '''''') + N''' WITH (FORMAT=''CSV'', FIRSTROW=2, FIELDQUOTE=''"'', TABLOCK);'; EXEC(@sql);
-SET @path = @RepoRoot + @sep + N'data' + @sep + N'rurality_classification' + @sep + N'rural_classification.csv';
-SET @sql = N'BULK INSERT dbo.stg_rural FROM ''' + REPLACE(@path, '''', '''''') + N''' WITH (FORMAT=''CSV'', FIRSTROW=2, FIELDQUOTE=''"'', TABLOCK);'; EXEC(@sql);
-SET @path = @RepoRoot + @sep + N'data' + @sep + N'gasoline_consumption' + @sep + N'eia_seds_gasoline_ca.csv';
-SET @sql = N'BULK INSERT dbo.stg_eia_seds FROM ''' + REPLACE(@path, '''', '''''') + N''' WITH (FORMAT=''CSV'', FIRSTROW=2, FIELDQUOTE=''"'', TABLOCK);'; EXEC(@sql);
-SET @path = @RepoRoot + @sep + N'data' + @sep + N'gasoline_consumption' + @sep + N'fuel_tax_stats.csv';
-SET @sql = N'BULK INSERT dbo.stg_fuel_tax_stats FROM ''' + REPLACE(@path, '''', '''''') + N''' WITH (FORMAT=''CSV'', FIRSTROW=2, FIELDQUOTE=''"'', TABLOCK);'; EXEC(@sql);
-SET @path = @RepoRoot + @sep + N'data' + @sep + N'ev_charging_infrastructure' + @sep + N'ev_charging_stations_ca.csv';
-SET @sql = N'BULK INSERT dbo.stg_ev_stations FROM ''' + REPLACE(@path, '''', '''''') + N''' WITH (FORMAT=''CSV'', FIRSTROW=2, FIELDQUOTE=''"'', TABLOCK);'; EXEC(@sql);
-SET @path = @RepoRoot + @sep + N'ca_cec_county_gasoline_long.csv';
-SET @sql = N'BULK INSERT dbo.stg_cec_gasoline_long FROM ''' + REPLACE(@path, '''', '''''') + N''' WITH (FORMAT=''CSV'', FIRSTROW=2, FIELDQUOTE=''"'', TABLOCK);'; EXEC(@sql);
+SET @path = @RepoRoot + N'\data\county_spatial_data\ca_counties.csv';
+SET @sql = N'BULK INSERT dbo.stg_ca_counties FROM ''' + @path + N''' WITH (FORMAT=''CSV'', FIRSTROW=2, FIELDQUOTE=''"'', TABLOCK);'; EXEC(@sql);
+SET @path = @RepoRoot + N'\data\sociodemographic\census_acs_county_data.csv';
+SET @sql = N'BULK INSERT dbo.stg_acs FROM ''' + @path + N''' WITH (FORMAT=''CSV'', FIRSTROW=2, FIELDQUOTE=''"'', TABLOCK);'; EXEC(@sql);
+SET @path = @RepoRoot + N'\data\rurality_classification\rural_classification.csv';
+SET @sql = N'BULK INSERT dbo.stg_rural FROM ''' + @path + N''' WITH (FORMAT=''CSV'', FIRSTROW=2, FIELDQUOTE=''"'', TABLOCK);'; EXEC(@sql);
+SET @path = @RepoRoot + N'\data\gasoline_consumption\eia_seds_gasoline_ca.csv';
+SET @sql = N'BULK INSERT dbo.stg_eia_seds FROM ''' + @path + N''' WITH (FORMAT=''CSV'', FIRSTROW=2, FIELDQUOTE=''"'', TABLOCK);'; EXEC(@sql);
+SET @path = @RepoRoot + N'\data\gasoline_consumption\fuel_tax_stats.csv';
+SET @sql = N'BULK INSERT dbo.stg_fuel_tax_stats FROM ''' + @path + N''' WITH (FORMAT=''CSV'', FIRSTROW=2, FIELDQUOTE=''"'', TABLOCK);'; EXEC(@sql);
+SET @path = @RepoRoot + N'\data\ev_charging_infrastructure\ev_charging_stations_ca.csv';
+SET @sql = N'BULK INSERT dbo.stg_ev_stations FROM ''' + @path + N''' WITH (FORMAT=''CSV'', FIRSTROW=2, FIELDQUOTE=''"'', TABLOCK);'; EXEC(@sql);
 
 DECLARE @y int = 2010;
 WHILE @y <= 2025
 BEGIN
-  SET @path = @RepoRoot + @sep + N'data' + @sep + N'air_quality' + @sep + N'annual_conc_by_monitor_' + CONVERT(varchar(4), @y) + N'.csv';
-  SET @sql = N'BULK INSERT dbo.stg_air_monitor FROM ''' + REPLACE(@path, '''', '''''') + N''' WITH (FORMAT=''CSV'', FIRSTROW=2, FIELDQUOTE=''"'', TABLOCK);';
+  SET @path = @RepoRoot + N'\data\air_quality\annual_conc_by_monitor_' + CONVERT(varchar(4), @y) + N'.csv';
+  SET @sql = N'BULK INSERT dbo.stg_air_monitor FROM ''' + @path + N''' WITH (FORMAT=''CSV'', FIRSTROW=2, FIELDQUOTE=''"'', TABLOCK);';
   EXEC(@sql);
   SET @y += 1;
 END;
+GO
+
+-- The CEC workbook is loaded with OPENROWSET. Install/enable Microsoft.ACE.OLEDB.12.0 first if your SQL Server does not have it.
+DECLARE @RepoRoot2 nvarchar(4000) = N'$(RepoRoot)';
+DECLARE @xlsx nvarchar(4000) = @RepoRoot2 + N'\data\gasoline_consumption\cec_a15_county_gasoline.xlsx';
+DECLARE @sql2 nvarchar(max) = N'
+SELECT * INTO dbo.stg_cec_gasoline_wide
+FROM OPENROWSET(''Microsoft.ACE.OLEDB.12.0'', ''Excel 12.0;HDR=NO;IMEX=1;Database=' + @xlsx + N''', ''SELECT * FROM [Retail Gasoline Sales by County$]'');';
+EXEC(@sql2);
 GO
 
 SELECT GEOID AS fips, NAME AS county, UPPER(NAME) AS county_key, ALAND AS aland, INTPTLAT AS county_lat, INTPTLON AS county_lon,
@@ -150,10 +136,19 @@ FROM dbo.stg_acs
 WHERE state_fips = '06';
 GO
 
-SELECT UPPER(county) AS county_key, [year], gasoline_gallons
-INTO dbo.clean_gasoline
-FROM dbo.stg_cec_gasoline_long
-WHERE UPPER(county) <> 'TOTAL';
+-- Convert the CEC two-row header workbook layout to long county-year gasoline gallons.
+-- If OPENROWSET produces different F-column names on your machine, inspect dbo.stg_cec_gasoline_wide and adjust this VALUES map.
+WITH src AS (
+  SELECT * FROM dbo.stg_cec_gasoline_wide WHERE F1 IS NOT NULL AND F1 NOT IN ('County', 'Retail Gasoline Sales by County', '(Millions of Gallons)')
+), long_gas AS (
+  SELECT UPPER(CAST(F1 AS nvarchar(100))) AS county_key, v.[year], TRY_CONVERT(float, v.million_gallons) * 1000000.0 AS gasoline_gallons
+  FROM src
+  CROSS APPLY (VALUES
+    (2010,F3),(2011,F5),(2012,F7),(2013,F9),(2014,F11),(2015,F13),(2016,F15),(2017,F17),(2018,F19),(2019,F21),
+    (2020,F23),(2021,F25),(2022,F27),(2023,F29),(2024,F31)
+  ) v([year], million_gallons)
+)
+SELECT county_key, [year], gasoline_gallons INTO dbo.clean_gasoline FROM long_gas;
 GO
 
 SELECT CONCAT([State Code], RIGHT('000' + [County Code], 3)) AS fips, [Year] AS [year],
@@ -168,7 +163,7 @@ GO
 WITH ev_geo AS (
   SELECT e.*, geometry::Point(longitude, latitude, 4326) AS station_geom
   FROM dbo.stg_ev_stations e
-  WHERE state = 'CA' AND latitude IS NOT NULL AND longitude IS NOT NULL AND TRY_CONVERT(date, open_date) <= '2021-12-31'
+  WHERE state = 'CA' AND latitude IS NOT NULL AND longitude IS NOT NULL AND open_date <= '2021-12-31'
 ), joined AS (
   SELECT c.fips, e.ev_dc_fast_num, e.ev_level2_evse_num
   FROM ev_geo e
