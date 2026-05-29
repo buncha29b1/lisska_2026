@@ -15,10 +15,14 @@ if (!file.exists(panel_csv)) {
   stop("Panel CSV not found. Run preprocess_twfe_sqlserver.sql and save its final result set as ca_county_year_panel.csv, or run python build_twfe_model.py first.")
 }
 
-panel <- read.csv(panel_csv, stringsAsFactors = FALSE)
+panel <- read.csv(panel_csv, stringsAsFactors = FALSE, colClasses = c(fips = "character"))
 needed <- c("log_gasoline_pc", "dose_x_post_nevi", "log_med_hh_inc", "share_under_150k", "share_white_nh", "log_population", "fips", "year")
+missing_needed <- setdiff(needed, names(panel))
+if (length(missing_needed) > 0) {
+  stop(paste("Panel is missing required columns:", paste(missing_needed, collapse = ", ")))
+}
 panel <- panel[complete.cases(panel[, needed]), ]
-panel$fips <- sprintf("%05s", as.character(panel$fips))
+panel$fips <- sprintf("%05d", as.integer(panel$fips))
 panel$fips <- as.factor(panel$fips)
 panel$year <- as.factor(panel$year)
 

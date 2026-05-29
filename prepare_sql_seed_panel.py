@@ -1,10 +1,10 @@
-"""Create SQL Server-friendly clean panel seed CSV without third-party packages.
+"""Create the root-level SQL seed panel without third-party packages.
 
-This helper exists for SQL Server installations where BULK INSERT ... FORMAT='CSV'
-or OPENROWSET are unavailable. It reads the collected repo data with Python's
-standard library and writes ca_county_year_panel_sql_seed.csv, a simple comma CSV
-(no embedded commas/quotes/newlines) that preprocess_twfe_sqlserver.sql can load
-with legacy BULK INSERT syntax.
+This helper reads the collected repo data with Python's standard library and
+writes ca_county_year_panel_sql_seed.csv. The SSMS preprocessing script embeds
+the current committed seed as T-SQL INSERT statements instead of using BULK
+INSERT/OPENROWSET, which avoids OLE DB provider errors on locked-down SQL Server
+installations.
 """
 from __future__ import annotations
 
