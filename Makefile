@@ -1,7 +1,10 @@
-.PHONY: install_twfe_deps build_panel estimate_sql_panel twfe cross_validate clean_twfe_outputs
+.PHONY: install_twfe_deps prepare_sql_seed build_panel estimate_sql_panel twfe cross_validate clean_twfe_outputs
 
 install_twfe_deps:
 	python -m pip install -r requirements-twfe.txt
+
+prepare_sql_seed:
+	python prepare_sql_seed_panel.py
 
 build_panel:
 	python build_twfe_model.py
