@@ -334,7 +334,12 @@ def fit_twfe(panel: pd.DataFrame, outcome: str = "log_gasoline_pc") -> pd.DataFr
     try:
         from linearmodels.panel import PanelOLS
 
-        mod = PanelOLS.from_formula(f"{outcome} ~ {formula_rhs}", data=data.set_index(["fips", "year"]))
+        mod = PanelOLS.from_formula(
+            f"{outcome} ~ {formula_rhs}",
+            data=data.set_index(["fips", "year"]),
+            drop_absorbed=True,
+            check_rank=False,
+        )
         res = mod.fit(cov_type="clustered", cluster_entity=True)
         for name in res.params.index:
             results.append({"model": "python_linearmodels_nevi", "term": name, "estimate": res.params[name], "std_error": res.std_errors[name], "p_value": res.pvalues[name], "nobs": int(res.nobs)})
